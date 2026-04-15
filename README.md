@@ -48,8 +48,8 @@ Harvest-native label, useful when a time entry has no matching Deal/Company row.
 ntn workers env set HARVEST_ACCESS_TOKEN=<personal-access-token>
 ntn workers env set HARVEST_ACCOUNT_ID=<numeric-account-id>
 ntn workers env set INTEGRATION_TOKEN=<notion-internal-integration-token>
-ntn workers env set DEALS_DS_ID=21a91b07-11ac-808d-9657-000b1390d20b
-ntn workers env set COMPANIES_DS_ID=21991b07-11ac-80b0-b787-000b3d3995f6
+ntn workers env set DEALS_DS_ID=<your-deals-data-source-id>
+ntn workers env set COMPANIES_DS_ID=<your-companies-data-source-id>
 # TIME_ENTRIES_DS_ID — set after first deploy (see step 4)
 ```
 

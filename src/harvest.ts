@@ -14,7 +14,7 @@ function harvestHeaders(): Record<string, string> {
 	return {
 		Authorization: `Bearer ${requireEnv("HARVEST_ACCESS_TOKEN")}`,
 		"Harvest-Account-Id": requireEnv("HARVEST_ACCOUNT_ID"),
-		"User-Agent": "notion-harvest-sync (dennis@work.flowers)",
+		"User-Agent": "notion-harvest-sync",
 		Accept: "application/json",
 	};
 }
