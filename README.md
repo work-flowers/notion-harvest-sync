@@ -14,6 +14,13 @@ and Companies data sources.
 Both syncs write to the same managed Notion database (`Harvest Time Entries`)
 and share a pacer (`harvestApi`, 60 req / 15 s — Harvest's limit is 100 / 15 s).
 
+### Person mapping
+
+Each entry's Harvest user is mapped to a Notion `Person` property by matching
+the Harvest user's email address to a workspace member. Users without a
+matching workspace member are left unset. The Harvest user list is cached
+in-process for an hour to keep syncs cheap.
+
 ### Relation linking (hybrid approach)
 
 Worker relations can only target other Worker-managed databases, so the link
@@ -26,7 +33,12 @@ the Time Entries database manually after first deploy (see setup below).
 - `Company` ← match by Harvest `client.id` ↔ Companies property `Harvest Client ID`.
 
 A newly-synced entry may appear without relations for up to one cycle (≤ 1 h);
-the next run will fill them in.
+the next run will fill them in. The relation-backfill pass uses a dedicated
+Notion integration (`INTEGRATION_TOKEN`) — the Worker's own auth can only reach
+Worker-managed databases.
+
+The redundant `Client` and `Project` rich_text properties are kept as a
+Harvest-native label, useful when a time entry has no matching Deal/Company row.
 
 ## Setup
 
@@ -35,10 +47,17 @@ the next run will fill them in.
 ```shell
 ntn workers env set HARVEST_ACCESS_TOKEN=<personal-access-token>
 ntn workers env set HARVEST_ACCOUNT_ID=<numeric-account-id>
+ntn workers env set INTEGRATION_TOKEN=<notion-internal-integration-token>
 ntn workers env set DEALS_DS_ID=21a91b07-11ac-808d-9657-000b1390d20b
 ntn workers env set COMPANIES_DS_ID=21991b07-11ac-80b0-b787-000b3d3995f6
 # TIME_ENTRIES_DS_ID — set after first deploy (see step 4)
 ```
+
+`INTEGRATION_TOKEN` is a dedicated Notion internal integration used only for
+the relation backfill step. Create one at
+<https://www.notion.so/profile/integrations> and share the **Deals**,
+**Companies**, and (after first deploy) **Harvest Time Entries** data sources
+with it.
 
 Grab Harvest credentials from
 <https://id.getharvest.com/developers>.
