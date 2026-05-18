@@ -31,11 +31,14 @@ the Time Entries database manually after first deploy (see setup below).
 
 - `Deal` ← match by Harvest `project.code` ↔ Deals property `Deal ID`.
 - `Company` ← match by Harvest `client.id` ↔ Companies property `Harvest Client ID`.
+- `wfProject` ← match by Harvest `project.code` ↔ Projects property `Project ID`.
+  (Same key as the Deal lookup; a code may match a Deal, a Project, both, or
+  neither.)
 
 A newly-synced entry may appear without relations for up to one cycle (≤ 1 h);
-the next run will fill them in. The relation-backfill pass uses a dedicated
-Notion integration (`INTEGRATION_TOKEN`) — the Worker's own auth can only reach
-Worker-managed databases.
+the next run will fill them in. The relation-backfill pass uses the sync's
+pre-authenticated Notion client (`context.notion`, backed by `NOTION_API_TOKEN`)
+to reach the pre-existing Deals and Companies data sources.
 
 The redundant `Client` and `Project` rich_text properties are kept as a
 Harvest-native label, useful when a time entry has no matching Deal/Company row.
@@ -47,17 +50,18 @@ Harvest-native label, useful when a time entry has no matching Deal/Company row.
 ```shell
 ntn workers env set HARVEST_ACCESS_TOKEN=<personal-access-token>
 ntn workers env set HARVEST_ACCOUNT_ID=<numeric-account-id>
-ntn workers env set INTEGRATION_TOKEN=<notion-internal-integration-token>
+ntn workers env set NOTION_API_TOKEN=<notion-internal-integration-token>
 ntn workers env set DEALS_DS_ID=<your-deals-data-source-id>
 ntn workers env set COMPANIES_DS_ID=<your-companies-data-source-id>
+ntn workers env set PROJECTS_DS_ID=<your-projects-data-source-id>
 # TIME_ENTRIES_DS_ID — set after first deploy (see step 4)
 ```
 
-`INTEGRATION_TOKEN` is a dedicated Notion internal integration used only for
-the relation backfill step. Create one at
+`NOTION_API_TOKEN` is the platform-standard env var that backs every sync's
+`context.notion` client. Create a Notion internal integration at
 <https://www.notion.so/profile/integrations> and share the **Deals**,
-**Companies**, and (after first deploy) **Harvest Time Entries** data sources
-with it.
+**Companies**, **Projects**, and (after first deploy) **Harvest Time Entries**
+data sources with it.
 
 Grab Harvest credentials from
 <https://id.getharvest.com/developers>.
@@ -76,9 +80,12 @@ This creates the `Harvest Time Entries` database in Notion and populates it.
 1. Share the existing **Deals** and **Companies** data sources with the
    integration backing the Worker.
 2. Open the newly-created **Harvest Time Entries** database.
-3. Add two properties:
+3. Add three relation properties:
    - `Deal` — Relation → **Deals**.
    - `Company` — Relation → **Companies**.
+   - `wfProject` — Relation → **Projects**. (Named `wfProject` to avoid
+     colliding with the sync-managed `Project` text property, which stores
+     the Harvest project name.)
 4. Share the Harvest Time Entries database with the same integration.
 
 ### 4. Wire up the Notion data source ID
@@ -121,6 +128,6 @@ ntn workers runs list
 - `src/index.ts` — worker entrypoint; defines the database, pacer, and two syncs.
 - `src/harvest.ts` — Harvest API client (`GET /v2/time_entries`).
 - `src/notion-lookup.ts` — builds Deals/Companies lookup maps via the Notion
-  API and patches empty `Deal` / `Company` relation properties on Time Entries
-  rows.
+  API and patches empty `Deal` / `Company` / `Project` relation properties on
+  Time Entries rows.
 - `src/types.ts` — Harvest response types.

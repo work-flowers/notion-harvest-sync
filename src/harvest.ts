@@ -30,6 +30,7 @@ export interface FetchTimeEntriesParams {
 
 export async function fetchTimeEntries(
 	params: FetchTimeEntriesParams,
+	wait?: () => Promise<void>,
 ): Promise<HarvestTimeEntriesPage> {
 	const url = new URL(`${HARVEST_BASE_URL}/time_entries`);
 	url.searchParams.set("page", String(params.page));
@@ -38,6 +39,7 @@ export async function fetchTimeEntries(
 		url.searchParams.set("updated_since", params.updatedSince);
 	}
 
+	await wait?.();
 	const response = await fetch(url.toString(), { headers: harvestHeaders() });
 	if (!response.ok) {
 		const body = await response.text();
@@ -55,10 +57,14 @@ export async function fetchTimeEntries(
 const USER_CACHE_TTL_MS = 60 * 60 * 1000;
 let cachedUserMap: { map: Map<number, string>; fetchedAt: number } | null = null;
 
-async function fetchUsersPage(page: number): Promise<HarvestUsersPage> {
+async function fetchUsersPage(
+	page: number,
+	wait?: () => Promise<void>,
+): Promise<HarvestUsersPage> {
 	const url = new URL(`${HARVEST_BASE_URL}/users`);
 	url.searchParams.set("page", String(page));
 	url.searchParams.set("per_page", "100");
+	await wait?.();
 	const response = await fetch(url.toString(), { headers: harvestHeaders() });
 	if (!response.ok) {
 		const body = await response.text();
@@ -73,7 +79,9 @@ async function fetchUsersPage(page: number): Promise<HarvestUsersPage> {
  * Build (or reuse) a map of Harvest user_id → email address. Pages through
  * all users on first call, then caches for an hour.
  */
-export async function getUserEmailMap(): Promise<Map<number, string>> {
+export async function getUserEmailMap(
+	wait?: () => Promise<void>,
+): Promise<Map<number, string>> {
 	if (cachedUserMap && Date.now() - cachedUserMap.fetchedAt < USER_CACHE_TTL_MS) {
 		return cachedUserMap.map;
 	}
@@ -82,7 +90,7 @@ export async function getUserEmailMap(): Promise<Map<number, string>> {
 	// Paginate the full user list.
 	// eslint-disable-next-line no-constant-condition
 	while (true) {
-		const result = await fetchUsersPage(page);
+		const result = await fetchUsersPage(page, wait);
 		for (const user of result.users) {
 			if (user.email) map.set(user.id, user.email);
 		}

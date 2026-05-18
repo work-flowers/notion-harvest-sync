@@ -1,10 +1,44 @@
+// Notion API version that exposes /v1/data_sources/{id}/query. The platform's
+// `context.notion` client is pinned to an older version that 404s on data-source
+// endpoints, so this module talks to the Notion API directly using
+// `NOTION_API_TOKEN` (which the platform also uses to back `context.notion`).
+const NOTION_VERSION = "2026-03-11";
+const NOTION_API_BASE = "https://api.notion.com/v1";
+
+async function notionFetch(
+	path: string,
+	method: "GET" | "POST" | "PATCH",
+	body?: Record<string, unknown>,
+): Promise<unknown> {
+	const token = process.env.NOTION_API_TOKEN;
+	if (!token) throw new Error("NOTION_API_TOKEN is not set");
+	const response = await fetch(`${NOTION_API_BASE}${path}`, {
+		method,
+		headers: {
+			Authorization: `Bearer ${token}`,
+			"Notion-Version": NOTION_VERSION,
+			"Content-Type": "application/json",
+		},
+		body: body ? JSON.stringify(body) : undefined,
+	});
+	const text = await response.text();
+	if (!response.ok) {
+		throw new Error(
+			`Notion ${response.status} ${response.statusText} on ${method} ${path}: ${text.slice(0, 500)}`,
+		);
+	}
+	return text ? JSON.parse(text) : null;
+}
+
 // Relation property names on the Time Entries database — set manually in Notion
 // after first deploy. See README / plan.
 const DEAL_RELATION_PROPERTY = "Deal";
 const COMPANY_RELATION_PROPERTY = "Company";
+const PROJECT_RELATION_PROPERTY = "wfProject";
 
 // Lookup property names on the related data sources.
 const DEAL_ID_PROPERTY_ON_DEALS = "Deal ID";
+const PROJECT_ID_PROPERTY_ON_PROJECTS = "Project ID";
 const HARVEST_CLIENT_ID_PROPERTY_ON_COMPANIES = "Harvest Client ID";
 
 // Text-property names on Time Entries rows that carry the lookup keys.
@@ -19,10 +53,6 @@ const MAX_SCAN_PER_RUN = 2000;
 
 // Cache lookup maps across runs in the same process.
 const LOOKUP_TTL_MS = 10 * 60 * 1000;
-
-// Notion API version that exposes /v1/data_sources/{id}/query.
-const NOTION_VERSION = "2025-09-03";
-const NOTION_API_BASE = "https://api.notion.com/v1";
 
 interface LookupCacheEntry {
 	map: Map<string, string>;
@@ -42,37 +72,11 @@ interface NotionQueryResponse {
 	has_more: boolean;
 }
 
-async function notionFetch(
-	token: string,
-	path: string,
-	method: "GET" | "POST" | "PATCH",
-	body?: Record<string, unknown>,
-): Promise<unknown> {
-	const response = await fetch(`${NOTION_API_BASE}${path}`, {
-		method,
-		headers: {
-			Authorization: `Bearer ${token}`,
-			"Notion-Version": NOTION_VERSION,
-			"Content-Type": "application/json",
-		},
-		body: body ? JSON.stringify(body) : undefined,
-	});
-	const text = await response.text();
-	if (!response.ok) {
-		throw new Error(
-			`Notion ${response.status} ${response.statusText} on ${method} ${path}: ${text.slice(0, 500)}`,
-		);
-	}
-	return text ? JSON.parse(text) : null;
-}
-
 async function queryDataSource(
-	token: string,
 	dataSourceId: string,
 	body: Record<string, unknown>,
 ): Promise<NotionQueryResponse> {
 	return (await notionFetch(
-		token,
 		`/data_sources/${dataSourceId}/query`,
 		"POST",
 		body,
@@ -80,11 +84,10 @@ async function queryDataSource(
 }
 
 async function updatePage(
-	token: string,
 	pageId: string,
 	properties: Record<string, unknown>,
 ): Promise<void> {
-	await notionFetch(token, `/pages/${pageId}`, "PATCH", { properties });
+	await notionFetch(`/pages/${pageId}`, "PATCH", { properties });
 }
 
 /** Extract a plain string value from a Notion property, across common types. */
@@ -124,7 +127,6 @@ function propertyToString(prop: unknown): string | null {
 
 /** Build a lookup map (key-string → page_id) by scanning a data source. */
 async function buildLookupMap(
-	token: string,
 	dataSourceId: string,
 	keyProperty: string,
 	filter?: Record<string, unknown>,
@@ -135,7 +137,7 @@ async function buildLookupMap(
 		const body: Record<string, unknown> = { page_size: 100 };
 		if (startCursor) body.start_cursor = startCursor;
 		if (filter) body.filter = filter;
-		const response = await queryDataSource(token, dataSourceId, body);
+		const response = await queryDataSource(dataSourceId, body);
 		for (const page of response.results) {
 			const key = propertyToString(page.properties?.[keyProperty]);
 			if (key) map.set(key, page.id);
@@ -146,7 +148,6 @@ async function buildLookupMap(
 }
 
 async function getLookupMap(
-	token: string,
 	dataSourceId: string,
 	keyProperty: string,
 ): Promise<Map<string, string>> {
@@ -156,13 +157,13 @@ async function getLookupMap(
 	}
 	let map: Map<string, string>;
 	try {
-		map = await buildLookupMap(token, dataSourceId, keyProperty, {
+		map = await buildLookupMap(dataSourceId, keyProperty, {
 			property: keyProperty,
 			rich_text: { is_not_empty: true },
 		});
 	} catch {
 		// Property might not be rich_text — fall back to unfiltered scan.
-		map = await buildLookupMap(token, dataSourceId, keyProperty);
+		map = await buildLookupMap(dataSourceId, keyProperty);
 	}
 	lookupCache.set(dataSourceId, { map, fetchedAt: Date.now() });
 	return map;
@@ -174,10 +175,10 @@ interface TimeEntryRow {
 	clientId: string | null;
 	dealEmpty: boolean;
 	companyEmpty: boolean;
+	projectEmpty: boolean;
 }
 
 async function findTimeEntriesNeedingRelations(
-	token: string,
 	timeEntriesDs: string,
 ): Promise<TimeEntryRow[]> {
 	const rows: TimeEntryRow[] = [];
@@ -189,11 +190,12 @@ async function findTimeEntriesNeedingRelations(
 				or: [
 					{ property: DEAL_RELATION_PROPERTY, relation: { is_empty: true } },
 					{ property: COMPANY_RELATION_PROPERTY, relation: { is_empty: true } },
+					{ property: PROJECT_RELATION_PROPERTY, relation: { is_empty: true } },
 				],
 			},
 		};
 		if (startCursor) body.start_cursor = startCursor;
-		const response = await queryDataSource(token, timeEntriesDs, body);
+		const response = await queryDataSource(timeEntriesDs, body);
 
 		for (const page of response.results) {
 			const props = page.properties ?? {};
@@ -203,12 +205,16 @@ async function findTimeEntriesNeedingRelations(
 			const companyProp = props[COMPANY_RELATION_PROPERTY] as
 				| { relation?: unknown[] }
 				| undefined;
+			const projectProp = props[PROJECT_RELATION_PROPERTY] as
+				| { relation?: unknown[] }
+				| undefined;
 			rows.push({
 				pageId: page.id,
 				projectCode: propertyToString(props[HARVEST_PROJECT_CODE_PROPERTY]),
 				clientId: propertyToString(props[HARVEST_CLIENT_ID_PROPERTY]),
 				dealEmpty: !dealProp?.relation?.length,
 				companyEmpty: !companyProp?.relation?.length,
+				projectEmpty: !projectProp?.relation?.length,
 			});
 			if (rows.length >= MAX_SCAN_PER_RUN) return rows;
 		}
@@ -225,30 +231,39 @@ export interface BackfillResult {
 }
 
 /**
- * Best-effort: for any Time Entries rows with an empty Deal or Company relation,
- * look up matching pages in the Deals / Companies data sources and set the
- * relation. Skips rows where no match is found.
+ * Best-effort: for any Time Entries rows with an empty Deal, Company, or
+ * wfProject relation, look up matching pages in the Deals / Companies /
+ * Projects data sources and set the relation. Skips rows where no match is
+ * found.
  *
- * Uses a dedicated Notion integration (INTEGRATION_TOKEN) rather than the
- * Worker's internal auth, because Worker-managed auth doesn't have access to
- * pre-existing Notion data sources.
+ * Harvest `project.code` (stored on each Time Entry as `Harvest Project Code`)
+ * is the universal key for both the Deal and wfProject lookups — a code might
+ * match a Deal, a Project, both, or neither.
+ *
+ * Talks to the Notion API directly using `NOTION_API_TOKEN` (the same token
+ * that backs the platform's `context.notion`). We can't reuse `context.notion`
+ * because it's pinned to an older Notion-Version that 404s on the
+ * `/v1/data_sources/` endpoints used here. The integration behind the token
+ * must be shared with the Deals, Companies, Projects, and Time Entries data
+ * sources.
  */
 export async function backfillRelations(): Promise<BackfillResult> {
 	const timeEntriesDs = process.env.TIME_ENTRIES_DS_ID;
 	const dealsDs = process.env.DEALS_DS_ID;
 	const companiesDs = process.env.COMPANIES_DS_ID;
-	const token = process.env.INTEGRATION_TOKEN;
+	const projectsDs = process.env.PROJECTS_DS_ID;
 
-	if (!timeEntriesDs || !dealsDs || !companiesDs || !token) {
+	if (!timeEntriesDs || !dealsDs || !companiesDs || !projectsDs) {
 		return { scanned: 0, patched: 0, skipped: 0, errors: 0 };
 	}
 
-	const [dealMap, companyMap] = await Promise.all([
-		getLookupMap(token, dealsDs, DEAL_ID_PROPERTY_ON_DEALS),
-		getLookupMap(token, companiesDs, HARVEST_CLIENT_ID_PROPERTY_ON_COMPANIES),
+	const [dealMap, companyMap, projectMap] = await Promise.all([
+		getLookupMap(dealsDs, DEAL_ID_PROPERTY_ON_DEALS),
+		getLookupMap(companiesDs, HARVEST_CLIENT_ID_PROPERTY_ON_COMPANIES),
+		getLookupMap(projectsDs, PROJECT_ID_PROPERTY_ON_PROJECTS),
 	]);
 
-	const rows = await findTimeEntriesNeedingRelations(token, timeEntriesDs);
+	const rows = await findTimeEntriesNeedingRelations(timeEntriesDs);
 
 	let patched = 0;
 	let skipped = 0;
@@ -268,12 +283,18 @@ export async function backfillRelations(): Promise<BackfillResult> {
 				update[COMPANY_RELATION_PROPERTY] = { relation: [{ id: companyPageId }] };
 			}
 		}
+		if (row.projectEmpty && row.projectCode) {
+			const projectPageId = projectMap.get(row.projectCode);
+			if (projectPageId) {
+				update[PROJECT_RELATION_PROPERTY] = { relation: [{ id: projectPageId }] };
+			}
+		}
 		if (Object.keys(update).length === 0) {
 			skipped++;
 			continue;
 		}
 		try {
-			await updatePage(token, row.pageId, update);
+			await updatePage(row.pageId, update);
 			patched++;
 		} catch (err) {
 			errors++;

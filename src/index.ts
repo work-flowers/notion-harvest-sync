@@ -37,11 +37,11 @@ const timeEntries = worker.database("timeEntries", {
 			"Harvest Client ID": Schema.richText(),
 			"Updated At": Schema.date(),
 			"Created At": Schema.date(),
-			// Deal (relation → Deals) and Company (relation → Companies) are
-			// added manually in Notion after the first deploy and populated by
-			// backfillRelations() using the Notion API directly. They are not
-			// part of the sync schema because Worker relations can only target
-			// other Worker-managed databases.
+			// Deal (→ Deals), Company (→ Companies), and Project (→ Projects)
+			// relation properties are added manually in Notion after first
+			// deploy and populated by backfillRelations() using the Notion API
+			// directly. They are not part of the sync schema because Worker
+			// relations can only target other Worker-managed databases.
 		},
 	},
 });
@@ -86,10 +86,9 @@ worker.sync("timeEntriesBackfill", {
 	schedule: "manual",
 	execute: async (state: { page?: number } | undefined) => {
 		const page = state?.page ?? 1;
-		await harvestApi.wait();
 		const [result, userEmails] = await Promise.all([
-			fetchTimeEntries({ page, perPage: 100 }),
-			getUserEmailMap(),
+			fetchTimeEntries({ page, perPage: 100 }, harvestApi.wait),
+			getUserEmailMap(harvestApi.wait),
 		]);
 		const hasMore = page < result.total_pages;
 
@@ -126,10 +125,9 @@ worker.sync("timeEntriesDelta", {
 		// can advance the cursor to a consistent point after the final page.
 		const cycleStart = state?.cycleStart ?? nowMinusBuffer;
 
-		await harvestApi.wait();
 		const [result, userEmails] = await Promise.all([
-			fetchTimeEntries({ updatedSince: cursor, page, perPage: 100 }),
-			getUserEmailMap(),
+			fetchTimeEntries({ updatedSince: cursor, page, perPage: 100 }, harvestApi.wait),
+			getUserEmailMap(harvestApi.wait),
 		]);
 		const hasMore = page < result.total_pages;
 
@@ -148,7 +146,7 @@ worker.sync("timeEntriesDelta", {
 });
 
 async function tryBackfillRelations(): Promise<void> {
-	if (!process.env.TIME_ENTRIES_DS_ID || !process.env.INTEGRATION_TOKEN) return;
+	if (!process.env.TIME_ENTRIES_DS_ID || !process.env.NOTION_API_TOKEN) return;
 	try {
 		const result = await backfillRelations();
 		console.log(
