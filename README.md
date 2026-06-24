@@ -1,15 +1,15 @@
 # notion-harvest-sync
 
-A Notion Worker that syncs Harvest time tracking into a Notion database on an
-hourly schedule, and post-hoc links each entry to rows in pre-existing Deals
-and Companies data sources.
+A Notion Worker that syncs Harvest time tracking into a Notion database every
+six hours, and post-hoc links each entry to rows in pre-existing Deals,
+Companies, and Projects data sources.
 
 ## Capabilities
 
 | Key | Mode | Schedule | Purpose |
 |---|---|---|---|
 | `timeEntriesBackfill` | replace | manual | Full re-pull of all Harvest time entries. Run once on first deploy and whenever state drifts. |
-| `timeEntriesDelta` | incremental | 1h | Hourly fetch of entries changed since the last cursor. |
+| `timeEntriesDelta` | incremental | 6h | Every-6-hours fetch of entries changed since the last cursor. |
 
 Both syncs write to the same managed Notion database (`Harvest Time Entries`)
 and share a pacer (`harvestApi`, 60 req / 15 s — Harvest's limit is 100 / 15 s).
@@ -35,7 +35,7 @@ the Time Entries database manually after first deploy (see setup below).
   (Same key as the Deal lookup; a code may match a Deal, a Project, both, or
   neither.)
 
-A newly-synced entry may appear without relations for up to one cycle (≤ 1 h);
+A newly-synced entry may appear without relations for up to one cycle (≤ 6 h);
 the next run will fill them in. The relation-backfill pass uses the sync's
 pre-authenticated Notion client (`context.notion`, backed by `NOTION_API_TOKEN`)
 to reach the pre-existing Deals and Companies data sources.

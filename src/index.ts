@@ -103,11 +103,11 @@ worker.sync("timeEntriesBackfill", {
 	},
 });
 
-// Delta: incremental mode, hourly. Uses Harvest's `updated_since` filter.
+// Delta: incremental mode, every 6 hours. Uses Harvest's `updated_since` filter.
 worker.sync("timeEntriesDelta", {
 	database: timeEntries,
 	mode: "incremental",
-	schedule: "1h",
+	schedule: "6h",
 	execute: async (
 		state:
 			| { cursor?: string; page?: number; cycleStart?: string }
